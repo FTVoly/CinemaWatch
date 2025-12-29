@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import YouTube from 'react-youtube';
 import io from 'socket.io-client';
 import Peer from 'peerjs';
-import { Send, Mic, MicOff, MonitorPlay, Link as LinkIcon, Settings, Volume2, User, History, PlayCircle, PlusCircle, X } from 'lucide-react';
+import { Send, Mic, MicOff, MonitorPlay, Link as LinkIcon, Settings, Volume2, User, History, PlusCircle, X, Film } from 'lucide-react';
 
 // Mets bien ton lien Render ici !
 const socket = io.connect("https://cinemawatch-6mtr.onrender.com");
@@ -15,10 +15,12 @@ function Room() {
   const { roomId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   
-  // --- NOUVEAUX ÉTATS POUR LA VIDÉO ---
+  // --- ÉTATS VIDÉO ---
   const initialUrl = searchParams.get('video') || "https://www.youtube.com/watch?v=LXb3EKWsInQ";
   const [videoUrl, setVideoUrl] = useState(initialUrl);
-  const [history, setHistory] = useState([initialUrl]); // Historique
+  
+  // L'historique stocke maintenant des objets : { url, title, thumbnail }
+  const [history, setHistory] = useState([]); 
   const [showHistory, setShowHistory] = useState(false); 
   const [newVideoInput, setNewVideoInput] = useState(""); 
   const [showVideoInput, setShowVideoInput] = useState(false); 
@@ -47,7 +49,40 @@ function Room() {
   const isRemoteUpdate = useRef(false);
   const remoteAudioElements = useRef([]);
 
-  // --- VALIDATION DU PSEUDO ---
+  // --- 1. FONCTIONS UTILITAIRES VIDÉO ---
+  const getYouTubeID = (url) => {
+    const match = url.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/);
+    return (match && match[2].length === 11) ? match[2] : null;
+  };
+
+  // Cette fonction va chercher le titre et l'image automatiquement
+  const addToHistoryWithMetadata = async (url) => {
+    if (!url) return;
+    
+    // On vérifie si la vidéo est déjà dans l'historique pour ne pas l'avoir en double
+    if (history.some(item => item.url === url)) return;
+
+    let title = "Vidéo";
+    let thumbnail = null;
+    const ytId = getYouTubeID(url);
+
+    if (ytId) {
+        thumbnail = `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
+        // Astuce pour récupérer le titre sans clé API compliquée
+        try {
+            const response = await fetch(`https://noembed.com/embed?url=${url}`);
+            const data = await response.json();
+            if (data.title) title = data.title;
+        } catch (e) {
+            console.error("Impossible de récupérer le titre", e);
+        }
+    }
+
+    const newItem = { url, title, thumbnail };
+    setHistory(prev => [newItem, ...prev]);
+  };
+
+  // --- 2. LOGIQUE PRINCIPALE ---
   const handleJoin = () => {
     if (pseudo.trim().length > 0) {
         localStorage.setItem("user_pseudo", pseudo);
@@ -55,22 +90,28 @@ function Room() {
     }
   };
 
-  // --- CHANGEMENT DE VIDÉO ---
   const changeVideo = (url) => {
       if (!url.trim()) return;
       setVideoUrl(url);
       setSearchParams({ video: url });
-      setHistory(prev => [url, ...prev.filter(u => u !== url)]);
+      
+      // On ajoute à l'historique avec les métadonnées
+      addToHistoryWithMetadata(url);
+
       socket.emit("change_video", { roomId, newUrl: url, author: pseudo });
+      
       setNewVideoInput("");
       setShowVideoInput(false);
       setShowHistory(false);
       setMessages(prev => [...prev, { author: "Système", message: "Vous avez changé la vidéo.", time: "" }]);
   };
 
-  // --- INITIALISATION ---
+  // --- 3. INITIALISATION ---
   useEffect(() => {
     if (!isPseudoValid) return; 
+
+    // Au chargement, on ajoute la vidéo actuelle à l'historique
+    addToHistoryWithMetadata(initialUrl);
 
     const myPeer = new Peer(); 
 
@@ -113,7 +154,8 @@ function Room() {
     socket.on("receive_video_change", (data) => {
         setVideoUrl(data.newUrl);
         setSearchParams({ video: data.newUrl });
-        setHistory(prev => [data.newUrl, ...prev.filter(u => u !== data.newUrl)]);
+        // Les autres aussi ajoutent la vidéo à leur historique quand ça change
+        addToHistoryWithMetadata(data.newUrl);
         setMessages(prev => [...prev, { author: "Système", message: `${data.author} a changé la vidéo !`, time: "" }]);
     });
 
@@ -127,7 +169,7 @@ function Room() {
     };
   }, [roomId, isPseudoValid]); 
 
-  // --- HELPERS ---
+  // --- HELPERS AUDIO/VIDEO ---
   const changeMicrophone = async (deviceId) => { try { if (myStream) myStream.getTracks().forEach(track => track.stop()); const newStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } }, video: false }); setMyStream(newStream); setSelectedInputId(deviceId); const newAudioTrack = newStream.getAudioTracks()[0]; newAudioTrack.enabled = !isMuted; Object.values(peersRef.current).forEach(call => { const sender = call.peerConnection.getSenders().find(s => s.track.kind === 'audio'); if (sender) sender.replaceTrack(newAudioTrack); }); } catch (err) { console.error("Erreur micro:", err); } };
   const changeSpeaker = async (deviceId) => { try { setSelectedOutputId(deviceId); remoteAudioElements.current.forEach(audio => { if (audio.setSinkId) audio.setSinkId(deviceId); }); const testAudio = document.getElementById("mic-test-feedback"); if (testAudio && testAudio.setSinkId) testAudio.setSinkId(deviceId); } catch (err) {} };
   const connectToNewUser = (userId, stream, peer) => { const call = peer.call(userId, stream); const audio = document.createElement('audio'); call.on('stream', s => addAudioStream(audio, s)); call.on('close', () => audio.remove()); peersRef.current[userId] = call; };
@@ -136,7 +178,7 @@ function Room() {
   const handleRemoteAction = (data) => { if (playerRef.current && isYouTube) { if (data.type === 'play') playerRef.current.playVideo(); if (data.type === 'pause') playerRef.current.pauseVideo(); if (data.type === 'seek') playerRef.current.seekTo(data.time); } else { const videoElement = document.getElementById('html5-player'); if (videoElement) { if (data.type === 'play') videoElement.play(); if (data.type === 'pause') videoElement.pause(); } } setPlaying(data.type === 'play'); };
   const onReady = (event) => { playerRef.current = event.target; };
   const onStateChange = (event) => { if (isRemoteUpdate.current) return; if (event.data === 1) { socket.emit("video_action", { roomId, type: 'play' }); setPlaying(true); } if (event.data === 2) { socket.emit("video_action", { roomId, type: 'pause' }); setPlaying(false); } };
-  const getYouTubeID = (url) => { const match = url.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/); return (match && match[2].length === 11) ? match[2] : null; };
+  
   const sendMessage = () => { if (currentMsg.trim() !== "") { const msgData = { roomId, author: pseudo, message: currentMsg, time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }; socket.emit("send_message", msgData); setMessages((list) => [...list, msgData]); setCurrentMsg(""); } };
   const copyLink = () => { navigator.clipboard.writeText(window.location.href); alert("Lien copié !"); };
 
@@ -159,6 +201,8 @@ function Room() {
   return (
     <div className="flex h-screen flex-col md:flex-row bg-[#0a0a0a] overflow-hidden font-sans text-white">
       <div className="w-full h-[35vh] md:h-full md:flex-1 flex flex-col relative bg-black group z-10">
+        
+        {/* BANDEAU DU HAUT */}
         <div className="absolute top-0 left-0 w-full p-2 md:p-4 z-30 flex justify-between items-center bg-gradient-to-b from-black/90 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
             <div className="flex items-center gap-4">
                 <h1 className="text-white font-bold flex items-center gap-2 drop-shadow-md select-none text-sm md:text-lg"><MonitorPlay className="text-red-600" size={20}/> <span className="hidden md:inline">WatchParty</span> <span className="text-[10px] text-gray-400 font-normal ml-1 opacity-70">by {DEVELOPER_NAME}</span></h1>
@@ -168,6 +212,7 @@ function Room() {
             <button onClick={copyLink} className="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-full text-xs md:text-sm flex items-center gap-2 backdrop-blur-md transition border border-white/10 shadow-lg cursor-pointer"><LinkIcon size={14}/> <span className="hidden md:inline">Inviter</span></button>
         </div>
         
+        {/* POPUP CHANGER VIDÉO */}
         {showVideoInput && (
             <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 bg-[#1a1a1a] p-3 rounded-xl border border-gray-700 shadow-2xl flex gap-2 w-[90%] md:w-[500px] animate-fade-in">
                 <input type="text" value={newVideoInput} onChange={(e) => setNewVideoInput(e.target.value)} placeholder="Colle ton lien YouTube ici..." className="flex-1 bg-[#0f0f0f] text-white text-sm px-3 py-2 rounded-lg border border-gray-600 focus:border-red-600 focus:outline-none" onKeyDown={(e) => e.key === 'Enter' && changeVideo(newVideoInput)}/>
@@ -175,10 +220,30 @@ function Room() {
             </div>
         )}
 
+        {/* POPUP HISTORIQUE AMÉLIORÉ */}
         {showHistory && (
-            <div className="absolute top-16 left-20 z-40 bg-[#1a1a1a] p-4 rounded-xl border border-gray-700 shadow-2xl w-[300px] animate-fade-in">
-                <div className="flex justify-between items-center mb-3"><h3 className="font-bold text-sm flex items-center gap-2"><History size={16}/> Vidéos récentes</h3><button onClick={() => setShowHistory(false)}><X size={16} className="text-gray-400 hover:text-white"/></button></div>
-                <div className="max-h-[200px] overflow-y-auto space-y-2">{history.map((url, idx) => (<div key={idx} onClick={() => changeVideo(url)} className="flex items-center gap-2 p-2 rounded hover:bg-gray-800 cursor-pointer group transition"><PlayCircle size={16} className="text-gray-500 group-hover:text-red-500"/><div className="overflow-hidden"><p className="text-xs truncate text-gray-300 group-hover:text-white">{url}</p></div></div>))}</div>
+            <div className="absolute top-16 left-20 z-40 bg-[#1a1a1a] p-4 rounded-xl border border-gray-700 shadow-2xl w-[320px] animate-fade-in max-h-[400px] overflow-hidden flex flex-col">
+                <div className="flex justify-between items-center mb-3 border-b border-gray-700 pb-2"><h3 className="font-bold text-sm flex items-center gap-2"><History size={16}/> Historique</h3><button onClick={() => setShowHistory(false)}><X size={16} className="text-gray-400 hover:text-white"/></button></div>
+                <div className="overflow-y-auto space-y-2 flex-1 pr-1 custom-scrollbar">
+                    {history.map((item, idx) => (
+                        <div key={idx} onClick={() => changeVideo(item.url)} className="flex gap-3 p-2 rounded hover:bg-gray-800 cursor-pointer group transition items-start">
+                            {/* Miniature */}
+                            <div className="w-20 h-12 bg-black rounded overflow-hidden flex-shrink-0 relative border border-gray-700">
+                                {item.thumbnail ? (
+                                    <img src={item.thumbnail} alt="thumbnail" className="w-full h-full object-cover" />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-gray-600"><Film size={16}/></div>
+                                )}
+                            </div>
+                            {/* Titre */}
+                            <div className="flex-1 overflow-hidden">
+                                <p className="text-xs font-medium text-gray-200 group-hover:text-red-500 line-clamp-2 leading-snug">{item.title}</p>
+                                <p className="text-[9px] text-gray-500 mt-1 truncate opacity-60">{item.url}</p>
+                            </div>
+                        </div>
+                    ))}
+                    {history.length === 0 && <div className="text-center text-gray-500 text-xs py-4">Aucune vidéo récente</div>}
+                </div>
             </div>
         )}
 
@@ -187,6 +252,7 @@ function Room() {
         </div>
       </div>
       
+      {/* ZONE CHAT (Inchangé) */}
       <div className="flex-1 md:flex-none md:w-80 bg-[#141414] border-t md:border-t-0 md:border-l border-gray-800 flex flex-col z-20 shadow-2xl relative h-full">
         <div className="p-3 md:p-4 border-b border-gray-800 bg-[#1a1a1a] flex justify-between shadow-sm items-center">
             <h3 className="font-bold text-gray-200 flex items-center gap-2 text-sm md:text-base">Discussion</h3>
