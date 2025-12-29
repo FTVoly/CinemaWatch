@@ -32,10 +32,10 @@ io.on("connection", (socket) => {
     });
   });
 
-  // --- NOUVEAU : CHANGEMENT DE VIDÉO ---
+  // --- AJOUTE CE BLOC ICI ---
   socket.on("change_video", (data) => {
-    // On prévient TOUS les autres dans la salle que la vidéo a changé
-    socket.to(data.roomId).emit("receive_video_change", data.newUrl);
+    // On relaie la nouvelle URL et l'auteur à tout le monde dans la salle
+    socket.to(data.roomId).emit("receive_video_change", data);
   });
 
   socket.on("video_action", (data) => {
