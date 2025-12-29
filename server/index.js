@@ -32,6 +32,12 @@ io.on("connection", (socket) => {
     });
   });
 
+  // --- NOUVEAU : CHANGEMENT DE VIDÉO ---
+  socket.on("change_video", (data) => {
+    // On prévient TOUS les autres dans la salle que la vidéo a changé
+    socket.to(data.roomId).emit("receive_video_change", data.newUrl);
+  });
+
   socket.on("video_action", (data) => {
     socket.to(data.roomId).emit("receive_action", data);
   });
