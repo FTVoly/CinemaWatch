@@ -8,6 +8,9 @@ import { Send, Mic, MicOff, MonitorPlay, Link as LinkIcon, Settings, Volume2, Us
 // Mets bien ton lien Render ici !
 const socket = io.connect("https://cinemawatch-6mtr.onrender.com");
 
+// --- CONFIGURATION ---
+const DEVELOPER_NAME = "Voly & Farnex"; // <--- METS TON NOM ICI
+
 function Room() {
   const { roomId } = useParams();
   const [searchParams] = useSearchParams();
