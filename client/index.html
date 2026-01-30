@@ -9,5 +9,120 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <div id="chatbot-container" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999; font-family: sans-serif;">
+        <button id="chatbot-toggle" style="background-color: #2563eb; color: white; border: none; width: 60px; height: 60px; border-radius: 50%; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 24px; display: flex; align-items: center; justify-content: center; transition: transform 0.2s;">
+            💬
+        </button>
+
+        <div id="chatbot-window" style="display: none; position: absolute; bottom: 80px; right: 0; width: 350px; height: 500px; background: white; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); flex-direction: column; overflow: hidden; border: 1px solid #e5e7eb;">
+            <div style="background-color: #2563eb; color: white; padding: 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
+                <span>Assistant Garage</span>
+                <span id="chatbot-close" style="cursor: pointer; opacity: 0.8; font-size: 20px;">✕</span>
+            </div>
+            
+            <div id="chatbot-messages" style="flex: 1; padding: 16px; overflow-y: auto; background-color: #f8fafc; display: flex; flex-direction: column; gap: 10px;">
+                <div style="align-self: flex-start; background-color: white; padding: 12px 16px; border-radius: 12px 12px 12px 0; border: 1px solid #e5e7eb; max-width: 80%; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                    Bonjour ! Je peux prendre votre rendez-vous ou vérifier nos disponibilités.
+                </div>
+            </div>
+
+            <div style="padding: 12px; background: white; border-top: 1px solid #e5e7eb; display: flex; gap: 8px;">
+                <input type="text" id="chatbot-input" placeholder="Écrivez votre message..." style="flex: 1; padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 99px; outline: none; font-size: 14px;">
+                <button id="chatbot-send" style="background-color: #2563eb; color: white; border: none; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center;">➤</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ⬇️⬇️ C'EST ICI QU'IL FAUT COLLER TON LIEN N8N ⬇️⬇️
+            const WEBHOOK_URL = "https://n8n-ube2.onrender.com/webhook/garage-chat"; 
+            
+            // Génère un ID unique pour que l'IA se souvienne du visiteur
+            let sessionId = localStorage.getItem('chat_session_id');
+            if (!sessionId) {
+                sessionId = "user-" + Math.random().toString(36).substring(2, 9);
+                localStorage.setItem('chat_session_id', sessionId);
+            }
+
+            const toggleBtn = document.getElementById('chatbot-toggle');
+            const closeBtn = document.getElementById('chatbot-close');
+            const chatWindow = document.getElementById('chatbot-window');
+            const messagesDiv = document.getElementById('chatbot-messages');
+            const inputField = document.getElementById('chatbot-input');
+            const sendBtn = document.getElementById('chatbot-send');
+
+            // Ouvrir / Fermer
+            toggleBtn.addEventListener('click', () => {
+                const isHidden = chatWindow.style.display === 'none';
+                chatWindow.style.display = isHidden ? 'flex' : 'none';
+                if(isHidden) inputField.focus();
+            });
+            closeBtn.addEventListener('click', () => chatWindow.style.display = 'none');
+
+            // Afficher un message
+            function addMessage(text, isUser) {
+                const msgDiv = document.createElement('div');
+                msgDiv.style.alignSelf = isUser ? "flex-end" : "flex-start";
+                msgDiv.style.backgroundColor = isUser ? "#2563eb" : "white";
+                msgDiv.style.color = isUser ? "white" : "#1e293b";
+                msgDiv.style.padding = "12px 16px";
+                msgDiv.style.borderRadius = isUser ? "12px 12px 0 12px" : "12px 12px 12px 0";
+                msgDiv.style.maxWidth = "80%";
+                msgDiv.style.border = isUser ? "none" : "1px solid #e5e7eb";
+                msgDiv.style.boxShadow = "0 2px 4px rgba(0,0,0,0.02)";
+                msgDiv.innerText = text;
+                messagesDiv.appendChild(msgDiv);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+
+            // Envoyer à n8n
+            async function sendMessage() {
+                const text = inputField.value.trim();
+                if (!text) return;
+
+                addMessage(text, true);
+                inputField.value = "";
+
+                // Petit indicateur "..."
+                const loadingDiv = document.createElement('div');
+                loadingDiv.innerText = "• • •";
+                loadingDiv.style.color = "#94a3b8";
+                loadingDiv.style.fontSize = "12px";
+                loadingDiv.style.marginLeft = "10px";
+                loadingDiv.id = "bot-loading";
+                messagesDiv.appendChild(loadingDiv);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+                try {
+                    const response = await fetch(WEBHOOK_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ 
+                            chatInput: text, 
+                            sessionId: sessionId 
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    document.getElementById("bot-loading").remove();
+                    
+                    // On gère si n8n renvoie { output: "..." } ou { text: "..." }
+                    const botResponse = data.output || data.text || JSON.stringify(data);
+                    addMessage(botResponse, false);
+
+                } catch (error) {
+                    if(document.getElementById("bot-loading")) document.getElementById("bot-loading").remove();
+                    addMessage("Erreur de connexion 😓", false);
+                    console.error(error);
+                }
+            }
+
+            sendBtn.addEventListener('click', sendMessage);
+            inputField.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendMessage();
+            });
+        })();
+    </script>
   </body>
 </html>
